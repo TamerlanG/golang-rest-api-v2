@@ -1,13 +1,14 @@
 package main
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
-	_ "github.com/lib/pq" 
 
+	_ "github.com/lib/pq"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 // Database Connection
@@ -21,13 +22,14 @@ const (
 
 // Model 
 type Person struct {
+	gorm.Model
 	Name string `json:"name"`
 	Nickname string `json:"nickname"`
 }
 
 
 func main(){
-	http.HandleFunc("/", GETHandler)
+	http.HandleFunc("/people", GETHandler)
 	http.HandleFunc("/insert", POSTHandler)
 	log.Fatal(http.ListenAndServe(":8080", nil))	
 }
@@ -35,70 +37,44 @@ func main(){
 func GETHandler(w http.ResponseWriter, r *http.Request){
 	db := OpenConnection()
 
-	rows, err := db.Query("SELECT * FROM person")
-	if err != nil {
-		log.Fatal()
-	}
-
 	var people []Person
-
-	for rows.Next() {
-		var person Person
-		rows.Scan(&person.Name, &person.Nickname)
-		people = append(people, person)
-	}
+	
+	db.Find(&people)
 
 	peopleBytes, _ := json.MarshalIndent(people, "", "\t")
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(peopleBytes)
-	
-	defer rows.Close()
-	defer db.Close()
 }
 
 func POSTHandler(w http.ResponseWriter, r *http.Request){
 	db := OpenConnection()
-	var p Person
+	var person Person
 
-	err := json.NewDecoder(r.Body).Decode(&p)
+	err := json.NewDecoder(r.Body).Decode(&person)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return 
 	}
 
-	sqlStatement := `INSERT INTO person (name, nickname) VALUES ($1, $2)`
-
-	_, err = db.Exec(sqlStatement, p.Name, p.Nickname)
-	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		panic(err)
-	}
+	db.Create(&person)
 
 	w.WriteHeader(http.StatusOK)
-	
-	defer db.Close()
-
-
-
-
 	w.Header().Set("Content-Type", "application/json")
 
 }
 
-func OpenConnection() *sql.DB {
-	psqlInfo := fmt.Sprintf("host=%s port=%d user=%s " + 
+func OpenConnection() *gorm.DB {
+	dsn := fmt.Sprintf("host=%s port=%d user=%s " + 
 		"password=%s dbname=%s sslmode=disable", host, port, user, password, dbname)
 	
-	db, err := sql.Open("postgres", psqlInfo)
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
 		panic(err)
 	}
 
-	err = db.Ping()
-	if err != nil {
-		panic(err)
-	}
+	// Migrate the schema
+	db.AutoMigrate(&Person{})
 
 	return db
 }
